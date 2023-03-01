@@ -59,12 +59,10 @@ class DACModel(pn.viewable.Viewer):
     sorbent_reg_temp = 100 # [°C]
     sorbent_spec_work_equiv = 2490000000 # [J/kg]
     # Properties - geometrical of the sorbent:
-    particle_sphericity = param.Number(0.8) # [-] from Wilcox2012 book.
+    particle_sphericity = 0.8 # [-] from Wilcox2012 book.
     channel_diameter = param.Number(0.0001) # [m] - 100µm seems sufficient to ensure optimal kientic, see TODO
-    void_fraction = param.Number(0.4) # [-] from Wilcox2012 book.
+    void_fraction = 0.4 # [-] from Wilcox2012 book.
 
-    
-    
     #
 
     ############################################################
@@ -74,6 +72,7 @@ class DACModel(pn.viewable.Viewer):
     Pressure_drop = param.Number()
 
     Sorbent_mass = param.Number()
+    Sorbent_q = param.Number() # [mol/kg] Sorbent concentration
     
     
     def __init__(self, **params):
@@ -88,12 +87,17 @@ class DACModel(pn.viewable.Viewer):
             pn.widgets.NumberInput.from_param(self.param.channel_diameter),
             pn.widgets.NumberInput.from_param(self.param.void_fraction),
             pn.widgets.NumberInput.from_param(self.param.t_atm),
+            pn.widgets.NumberInput.from_param(self.param.t_now),
             pn.widgets.NumberInput.from_param(
                 self.param.air_viscosity,
                 disabled=True,
             ),
             pn.widgets.NumberInput.from_param(
                 self.param.Pressure_drop,
+                disabled=True,
+            ),
+            pn.widgets.NumberInput.from_param(
+                self.param.Sorbent_q,
                 disabled=True,
             ),
         )  
@@ -129,29 +133,33 @@ class DACModel(pn.viewable.Viewer):
     def update_filter_concentration(self):
         # Eq. 5 of https://doi.org/10.1016/j.cej.2018.11.072
 
-        def comp_dqdt(self):
+         t = self.t_now
+
+         def comp_dqdt(t,y):
             ktoth= 1 # Toth isothermal constant Value to be found
-            pp_CO2 = c_CO2_atm * p_atm # Partial pressure [Pa]
-            T0 = 273.15 + 80 # [K]
-            T = 273.15 + t_atm # [K]
+            pp_CO2 = self.c_CO2_atm * self.p_atm # Partial pressure [Pa]
+            T0 = 273.15 + 80 # [K] from paper
+            T = 273.15 + self.t_atm # [K]
             
-            qs0 =  3.4 # [mol/kg] Adsorption saturation mol/kg
+            qs0 =  3.4 # [mol/kg] Adsorption saturation mol/kg from paper
             Xi = 0 # [-] here imposed at 0 => no impact of temperature
             qs = qs0 * np.exp(Xi*(1-T/T0))
 
-            th0 = 0.37 # [-] heterogeneity parameter
-            alpha = 0.33 # [-] ???
+            th0 = 0.37 # [-] heterogeneity parameter from paper
+            alpha = 0.33 # [-] ??? from paper
             th = th0 * alpha * (1 - T0 / T)
 
             DH0 = 95.3 # kJ/mol TBC, should be given in sorbent properties
-            b = b0 * np.exp(DH0/(R*T0)*(T0/T - 1)) 
+            b = b0 * np.exp(DH0/(self.R*T0)*(T0/T - 1)) 
 
-            dqdt = ktoth * ( pp_CO2 * (1 - ( q / qs ) ** th ) ** ( 1 / th ) - 1 / b * q / qs)
+            dqdt = ktoth * ( pp_CO2 * (1 - ( y / qs ) ** th ) ** ( 1 / th ) - 1 / b * y / qs)
          
-        q = sp.integrate.RK45()
+         #Initial conditions:
+         t0 = 0 #starting time of the cycle
+         y0 = 0 #starting concentration 
 
-        self.Pressure_drop = self.filter_thickness * (term1 + term2) / 100000 
-    
+         self.sorbent_q = sp.integrate.RK45(comp_dqdt,t0,y0,t)
+        
     def __panel__(self):
         return self._panel
 
