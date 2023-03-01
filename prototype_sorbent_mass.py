@@ -4,27 +4,22 @@ import math
 
 from bokeh.models import ColumnDataSource
 from bokeh.plotting import figure
+from bokeh.models.widgets import DataTable, TableColumn, NumberFormatter
 
+import pandas as pd
 import panel as pn
 import param
 
 
-@dataclass
-class Circle:
-    radius: float
-    x: float
-    y: float
-
-
 class PrototypeSorbentMass(pn.viewable.Viewer):
 
-    pot_diameter_cm = param.Number(25)
-    filter_pod_diameter_cm = param.Number(5)
-    filter_pod_space_between_cm = param.Number(0.5)
-    area_covered_cm2 = param.Number()
+    pot_diameter_mm = param.Number(250)
+    filter_pod_diameter_mm = param.Number(40)
+    filter_pod_space_between_mm = param.Number(10)
+    area_covered_mm2 = param.Number()
     area_covered_pct = param.Number()
 
-    depth_cm = param.Number(1)
+    depth_mm = param.Number(10)
     volume_l = param.Number()
 
     sorbent_density_kg_per_l = param.Number(0.630)
@@ -36,14 +31,14 @@ class PrototypeSorbentMass(pn.viewable.Viewer):
         self._panel = pn.Row(
             pn.Column(
                 pn.pane.Markdown('### Compute sorbent mass'), 
-                pn.widgets.FloatInput.from_param(self.param.pot_diameter_cm),
-                pn.widgets.FloatInput.from_param(self.param.filter_pod_diameter_cm),
-                pn.widgets.FloatInput.from_param(self.param.filter_pod_space_between_cm),
+                pn.widgets.FloatInput.from_param(self.param.pot_diameter_mm),
+                pn.widgets.FloatInput.from_param(self.param.filter_pod_diameter_mm),
+                pn.widgets.FloatInput.from_param(self.param.filter_pod_space_between_mm),
                 pn.widgets.FloatInput.from_param(
                     self.param.area_covered_pct,
                     disabled=True,
                 ),
-                pn.widgets.FloatInput.from_param(self.param.depth_cm),
+                pn.widgets.FloatInput.from_param(self.param.depth_mm),
                 pn.widgets.FloatInput.from_param(
                     self.param.volume_l,
                     disabled=True,
@@ -54,7 +49,8 @@ class PrototypeSorbentMass(pn.viewable.Viewer):
                     disabled=True,
                 ),
             ),
-            pn.Column(self.circles_plot)
+            pn.Column(self.circles_plot),
+            pn.Column(self.circles_table),
         )  
 
     def get_small_circles(self):
@@ -76,99 +72,116 @@ class PrototypeSorbentMass(pn.viewable.Viewer):
             for i in range(no):
                 x = rc * math.cos(i * 2 * math.pi / no)
                 y = rc * math.sin(i * 2 * math.pi / no)
-                circles.append(Circle(radius=rs, x=x, y=y))
+                circles.append(dict(radius=rs, x=x, y=y))
 
             rc_next = rc - (2 * rs)
             if (rc_next >= rs):
                 circles.extend(make_circles(rs, rc_next))
             elif (rc > 2 * rs):
-                circles.append(Circle(radius=rs, x=0, y=0))
+                circles.append(dict(radius=rs, x=0, y=0))
 
             return circles
 
-        if self.pot_diameter_cm <= 0:
+        if self.pot_diameter_mm <= 0:
             return []
 
-        if self.filter_pod_diameter_cm <= 0:
+        if self.filter_pod_diameter_mm <= 0:
             return []
 
-        if self.filter_pod_diameter_cm > self.pot_diameter_cm:
+        if self.filter_pod_diameter_mm > self.pot_diameter_mm:
             return []
 
         # add padding around circles
-        small_radius = self.filter_pod_diameter_cm/2 + self.filter_pod_space_between_cm/2
-        large_radius = self.pot_diameter_cm/2 - self.filter_pod_space_between_cm/2
+        small_radius = self.filter_pod_diameter_mm/2 + self.filter_pod_space_between_mm/2
+        large_radius = self.pot_diameter_mm/2 - self.filter_pod_space_between_mm/2
 
         if (large_radius < 2 * small_radius):
-            return [Circle(radius=self.filter_pod_diameter_cm/2, x=0, y=0)]
+            return [dict(radius=self.filter_pod_diameter_mm/2, x=0, y=0)]
 
         circles = make_circles(small_radius, large_radius - small_radius)
 
+        circles_df = pd.DataFrame.from_records(circles)
+
         # replace radius with true radius
-        return [Circle(radius=self.filter_pod_diameter_cm/2, x=c.x, y=c.y) for c in circles]
+        circles_df['radius'] = self.filter_pod_diameter_mm/2
+
+        return circles_df
 
     @param.depends(
-        'pot_diameter_cm',
-        'filter_pod_diameter_cm',
-        'filter_pod_space_between_cm',
+        'pot_diameter_mm',
+        'filter_pod_diameter_mm',
+        'filter_pod_space_between_mm',
         watch=True,
         on_init=True,
     )
     def update_area_coverage(self):
         try:
-            circles = self.get_small_circles()
-            self.area_covered_cm2 = len(circles) * math.pi * (self.filter_pod_diameter_cm/2)**2
-            large_circle_area_cm2 = math.pi * (self.pot_diameter_cm/2)**2
-            self.area_covered_pct = self.area_covered_cm2/large_circle_area_cm2
+            circles_df = self.get_small_circles()
+            self.area_covered_mm2 = sum(math.pi * circles_df['radius']**2)
+            large_circle_area_mm2 = math.pi * (self.pot_diameter_mm/2)**2
+            self.area_covered_pct = self.area_covered_mm2/large_circle_area_mm2
 
         except ValueError:
-            self.area_covered_cm2 = 0
+            self.area_covered_mm2 = 0
             self.area_covered_pct = 0
 
     @param.depends(
-        'pot_diameter_cm',
-        'filter_pod_diameter_cm',
-        'filter_pod_space_between_cm',
+        'pot_diameter_mm',
+        'filter_pod_diameter_mm',
+        'filter_pod_space_between_mm',
         on_init=True,
     )
     def circles_plot(self):
 
-        circles = [Circle(radius=self.pot_diameter_cm/2, x=0, y=0)]
+        circles_df = pd.DataFrame.from_records([dict(radius=self.pot_diameter_mm/2, x=0, y=0)])
 
         try:
-            small_circles = self.get_small_circles()
-            circles.extend(small_circles)
-
+            small_circles_df = self.get_small_circles()
             # also draw padding
-            padding_circles = [
-                Circle(radius=sc.radius + self.filter_pod_space_between_cm/2, x=sc.x, y=sc.y)
-                for sc in small_circles
-            ]
-            circles.extend(padding_circles)
+            padding_circles_df = small_circles_df.copy()
+            padding_circles_df['radius'] += self.filter_pod_space_between_mm/2
+
+            circles_df = pd.concat([
+                circles_df,
+                small_circles_df,
+                padding_circles_df,
+            ])
+
         except ValueError:
             pass
 
-        source = ColumnDataSource(
-            dict(
-                x=[c.x for c in circles],
-                y=[c.y for c in circles],
-                r=[c.radius for c in circles],
-            )
-        )
+        source = ColumnDataSource(circles_df)
 
         p = figure(width=500, height=500, match_aspect=True)
-        p.circle(x="x", y="y", radius="r", source=source, alpha=0.1)
+        p.circle(x="x", y="y", radius="radius", source=source, alpha=0.1)
         
         # need to draw an invisible rectangle to let the auto-range feature work properly
         # and be able to keep match_aspect=True to draw proper circles
         # see https://github.com/bokeh/bokeh/issues/11082
-        p.rect(x=0, y=0, width=self.pot_diameter_cm, height=self.pot_diameter_cm, alpha=0)
+        p.rect(x=0, y=0, width=self.pot_diameter_mm, height=self.pot_diameter_mm, alpha=0)
 
         return p
 
-    @param.depends('area_covered_cm2', 'depth_cm', watch=True, on_init=True)
+    @param.depends(
+        'pot_diameter_mm',
+        'filter_pod_diameter_mm',
+        'filter_pod_space_between_mm',
+        on_init=True,
+    )
+    def circles_table(self):
+        small_circles_df = self.get_small_circles()
+        source = ColumnDataSource(small_circles_df)
+
+        columns = [
+            TableColumn(field="x", title="X (mm)", formatter=NumberFormatter(format='0.[00]')),
+            TableColumn(field="y", title="Y (mm)", formatter=NumberFormatter(format='0.[00]')),
+        ]
+        return DataTable(source=source, columns=columns, width=200)
+
+
+    @param.depends('area_covered_mm2', 'depth_mm', watch=True, on_init=True)
     def update_volume(self):
-        self.volume_l = self.area_covered_cm2 * self.depth_cm / 1000
+        self.volume_l = self.area_covered_mm2 * self.depth_mm / 1000 / 1000
 
     @param.depends('volume_l', 'sorbent_density_kg_per_l', watch=True, on_init=True)
     def update_mass(self):
